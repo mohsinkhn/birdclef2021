@@ -1,0 +1,45 @@
+run_name: "effb0_simple"
+sr: 32000
+n_mels: 64
+n_fft: 1024
+hop_length: 320
+win_length: 1024
+fmin: 300
+width: 500
+mixing_prob: 0.3
+noise_level: 0.05
+signal_amp: 100
+num_classes: 398
+secondary_confidence: 0.3
+# training
+training:
+  stage1:
+    # optimizer
+    optimizer: 'NovoGrad'
+    optimizer_kwargs:
+      lr: 0.01
+      weight_decay: 0.001
+      backbone_ratio: 1.0
+    # scheduler
+    scheduler: 'CosineAnnealingWarmRestarts'
+    scheduler_kwargs:
+      T_0: 785
+      eta_min: 0.000001
+    scheduler_type: 'step'
+    # training params
+    num_epochs: 100
+    batch_size: 64
+    num_workers: 8
+    accumulation_steps: 1
+    grad_clip: 10
+    model:
+      cls: 'SedCNN'
+      kws:
+        backbone: 'efficientnet_b0'
+        pretrained: True
+        dropout: 0.5
+        fc_channels: 1024
+        attn_channels: 2048
+        attn_gamma: 1.0
+        attn_dropout: 0.1
+      load_path: 'None'
