@@ -13,7 +13,8 @@ from torchlib.io import ConfigParser
 BASE_TEST_DIR = "data/train_soundscapes"
 
 
-def generate(models, border, config, filepaths, csvfile, check_accuracy=True, device='cuda'):
+def generate(models, border, config, filepaths, csvfile, check_accuracy=True, device='cuda', power=1.0,
+    lower_thresh=0.15, upper_thresh=0.3):
     preds = []
 
     # Uploading a list of files for testing | Загружаем список файлов для тестирования
@@ -23,6 +24,12 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
     test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
     # Looking for all unique audio recordings
     unique_audio_id = test_info.filepaths.unique()
+    # from src.constants import CODE2INT
+    # train = pd.read_csv("data/train_metadata.csv")
+    # tcor = train.loc[(train.longitude.between(-85, -83) & train.latitude.between(9, 11))]
+    # tssw = train.loc[(train.longitude.between(-77, -76) & train.latitude.between(42, 43))]
+    # bird_dict = {'COR': set([CODE2INT[b] for b in tcor.primary_label.unique()]),
+    #              'SSW': set([CODE2INT[b] for b in tssw.primary_label.unique()])}
 
     # Predict
     for model in models:
@@ -33,7 +40,7 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
             melspectr = get_melspec(audio_id, config)
             melspectr = librosa.power_to_db(melspectr, amin=1e-7, ref=np.max)
             melspectr = ((melspectr+80)/80).astype(np.float16)
-
+            # melspectr = melspectr - 0.1*melspectr.mean(1, keepdims=True)
             # Looking for all the excerpts for this sound
             test_df_for_audio_id = test_info.query(f"filepaths == '{audio_id}'").reset_index(drop=True)
             est_bird = np.zeros((config.num_classes))
@@ -42,9 +49,10 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
                 # Getting the site, start time, and id | Получаем сайт, время начала и id
                 start_time = row['seconds'] - 5
                 row_id = row['row_id']
+                site = row['site']
                 mels = []
                 probas = None
-
+                # indices = list(bird_dict[site])
                 # Cut out the desired piece | Вырезаем нужный кусок
                 start_index = int(config.sr * start_time/config.hop_length)
                 end_index = int(config.sr * row['seconds']/config.hop_length)
@@ -65,13 +73,13 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
                     # For each piece we make transformations | Для каждого куска делаем преобразования
                     for image in ys:
                         # Convert to 3 colors and normalize | Переводим в 3 цвета и нормализуем
-                        image = image - image.min()
+                        # image = image - image.min()
                         image = image/(image.max()+0.0000001)
-                        # image = image**0.85
+                        image = image**power
 
                         # image = image**0.85
                         # image = torch.from_numpy(np.stack([image, image, image])).float()
-                        image = mono_to_color(image, config.n_mels, config.width)
+                        image = mono_to_color(image, config.n_mels, int(0.95*config.width))
                         mels.append(image)
 
                     mels = np.stack(mels)
@@ -114,16 +122,17 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
                     z = xx.copy()
                     z[z < 0.5] = 0
                     est_bird = est_bird + z/70
-                    est_bird[(est_bird < 0.15) & (est_bird > 0)] = 0.15
-      
+                    est_bird[(est_bird < lower_thresh) & (est_bird > 0)] = lower_thresh
+                    # est_bird[indices] += 0.01
                 # Dictionary with an array of all passages | Словарь с массивом всех отрывков
                 probass[row_id] = proba
-            
-            est_bird[est_bird > 0.3] = 0.3
+
+            est_bird[est_bird > upper_thresh] = upper_thresh
             for row_id, probas in probass.items():
                 prediction_dict = []
                 for proba in probas:
                     proba += est_bird
+                    # proba[indices] += 0.05
                     events = proba > border
                     labels = np.argwhere(events).reshape(-1).tolist()
 
