@@ -1,3 +1,6 @@
+from collections import Counter
+from itertools import chain
+
 import librosa
 import numpy as np
 import pandas as pd
@@ -5,7 +8,7 @@ from pathlib import Path
 from tqdm import tqdm
 import torch
 
-from src.dataset import mono_to_color, INT2CODE
+from src.dataset import mono_to_color, INT2CODE, CODE2INT
 from src.prepare_melspecs import get_melspec
 from torchlib.io import ConfigParser
 
@@ -13,8 +16,156 @@ from torchlib.io import ConfigParser
 BASE_TEST_DIR = "data/train_soundscapes"
 
 
+def read_data(filepaths, csvfile):
+    test_info = pd.read_csv(csvfile)
+    filenames = list(Path(filepaths).glob("*.ogg"))
+    filename_map = {"_".join(f.stem.split("_")[:2]): str(f) for f in filenames}
+    test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
+    # Looking for all unique audio recordings
+    unique_audio_id = test_info.filepaths.unique()
+    return test_info, unique_audio_id
+
+
+def get_lat_lon(filepath):
+    with open(filepath, "r") as fp:
+        lines = fp.readlines()
+        lat = float(lines[3].split(" ")[1])
+        lon = float(lines[4].split(" ")[1])
+    return (lat, lon)
+
+
+def get_locationwise_counts(location_filepaths, metadata_fp, normalize=True, range_deg=1):
+    files = list(Path(location_filepaths).glob("*.txt"))
+    file_locs = [f.stem.split("_")[0] for f in files]
+    lat_lons = [get_lat_lon(fs) for fs in files]
+    loc_coords = {loc: coord for loc, coord in zip(file_locs, lat_lons)}
+    metadata = pd.read_csv(metadata_fp)
+    bird_loc_cnts = {}
+    for loc in file_locs:
+        lat, lon = loc_coords[loc]
+        print(lat, lon)
+        subset = metadata.loc[(metadata.latitude.between(lat-range_deg, lat+range_deg) & 
+                                          metadata.longitude.between(lon-range_deg, lon+range_deg))]
+        subset['secondary_labels'] = subset['secondary_labels'].apply(eval)
+        bird_cnts = Counter(subset.primary_label.tolist() + list(chain.from_iterable(subset.secondary_labels.tolist())))
+        if normalize:
+            bsum = sum(bird_cnts.values())
+            bird_cnts = {b: c/bsum for b, c in bird_cnts.items()}
+        bird_loc_cnts[loc] = bird_cnts
+    return bird_loc_cnts
+
+
+def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85, compress_factor=0.95, device='cuda'):
+    melspectr = get_melspec(audio_file, config)
+    melspectr = librosa.power_to_db(melspectr, amin=1e-7, ref=np.max)
+    melspectr = ((melspectr+80)/80).astype(np.float32)
+    site = test_audio.site.iloc[0]
+    row_ids = test_audio.row_id.values
+    end_seconds = test_audio.seconds.values
+    clip_frames = int(config.sr/config.hop_length)
+    ys = []
+
+    # stack array of melspec images
+    for s in end_seconds:
+        image = melspectr[:, (s-5)*clip_frames:s*clip_frames]
+        image = image/(image.max()+0.0000001)
+        image = image**power
+        image = mono_to_color(image, config.n_mels, int(compress_factor*config.width))
+        ys.append(image)
+    ys = np.stack(ys)
+
+    # Make prediction
+    batch_size = config.training.stage1.batch_size
+    probas = []
+    for n in range(0, len(ys), batch_size):
+        if len(ys) == 1:
+            mel = np.array(ys)
+        else:
+            mel = ys[n:n+batch_size]
+
+        mel = torch.from_numpy(mel).to(device)
+        prediction = model.model(mel)
+        # prediction = torch.sigmoid(prediction)
+        proba = prediction.detach().cpu().numpy()
+        probas.append(proba)
+    return row_ids, probas, site
+
+
+def get_clipwise_preds(model, config, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda'):
+    model.eval()
+    row_idss, probass, sites = [], [], []
+    with torch.no_grad():
+        for audio_file in tqdm(audio_files):
+            test_audio = test_df.query(f"filepaths == '{audio_file}'").reset_index(drop=True)
+            row_ids, probas, site = get_audio_file_predictions(model, config, audio_file, test_audio, power,
+                                                               compress_factor, device)                
+            row_idss.extend(row_ids)
+            probass.extend(probas)
+            sites.append(site)
+    return np.array(row_idss), np.concatenate(probass), np.array(sites)
+
+
+def post_process2(probas, test, bird_loc_cnts, max_w=0.5, mean_w=0.5, cnt_w=0):
+    proba = probas.copy()    
+    for audio_id in test.audio_id.unique():
+        rows = test.audio_id == audio_id
+        site = test.loc[rows, 'site'].iloc[0]
+        bird_cnts = bird_loc_cnts[site]
+        cnt_prob = np.log1p(np.repeat(np.array([bird_cnts.get(INT2CODE[i], 0) for i in range(398)]).reshape(1, -1), sum(rows), 0))
+        max_probs = np.max(proba[rows], axis=0, keepdims=True)
+        mean_probs = np.mean(proba[rows], axis=0, keepdims=True)
+        proba[rows] = proba[rows] + max_w*np.clip(max_probs, 0, 1.0) + mean_w*np.clip(mean_probs, 0, 1.0) + cnt_w*np.clip(cnt_prob, 0, 1/(1e-6 + cnt_w))
+    return proba
+
+
+def fast_f1_score(predictions, target):
+    tp = (predictions * target).sum(1)
+    fp = (predictions * (1 - target)).sum(1)
+    fn = ((1 - predictions) * target).sum(1)
+    f1 = tp / (tp + (fp + fn) / 2)
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    return f1.mean(), precision.mean(), recall.mean()
+
+
+def get_score(probas, labels, thresh=0.5):
+    targets = np.zeros_like(probas)
+    for i, lb in enumerate(labels):
+        for lj in lb.split(' '):
+            targets[i, CODE2INT[lj]] = 1
+
+    predictions = probas > thresh
+    predictions[predictions.sum(1) == 0, 397] = 1 
+    return fast_f1_score(predictions, targets)
+
+
+def get_models_preds(models, configs, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda'):
+    probass = []
+    for model, config in zip(models, configs):
+        row_ids, probas, sites = get_clipwise_preds(model, config, audio_files, test_df, power=0.85,
+                                                    compress_factor=0.95, device='cuda')
+        probass.append(probas)
+    return row_ids, probass, sites
+
+
+def get_pp_predictions(models, configs, audio_files, test_df, loc_files,
+                       loc_csv, power=0.85, compress_factor=0.95, device='cuda',
+                       max_w=0.5, mean_w=0.5, cnt_w=0.0, range_deg=0.2):
+    row_ids, probs, sites = get_models_preds(models, configs, test_df.filepaths.unique(), test_df, power,
+                                             compress_factor, device)
+    probs = np.mean(probs, 0)
+    bird_loc_cnts = get_locationwise_counts(loc_files, loc_csv, normalize=True, range_deg=range_deg)
+    probs = sigmoid(probs)
+    probs = post_process2(probs, test_df, bird_loc_cnts, max_w, mean_w, cnt_w)
+    return probs
+
+
+def sigmoid(x):
+    return 1/(1 + np.exp(-x))
+
+
 def generate(models, border, config, filepaths, csvfile, check_accuracy=True, device='cuda', power=1.0,
-    lower_thresh=0.15, upper_thresh=0.3):
+             lower_thresh=0.15, upper_thresh=0.3):
     preds = []
 
     # Uploading a list of files for testing | Загружаем список файлов для тестирования
@@ -176,4 +327,5 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
                 recs.append(rec)
             f1score, precision, recall = np.mean(f1s), np.mean(precs), np.mean(recs)
             print(f"F1 - score : {f1score}, Precision: {precision}, Recall: {recall}")
-    return preds
+            return preds, f1score
+    return preds, None

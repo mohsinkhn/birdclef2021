@@ -123,7 +123,7 @@ class BirdModel(pl.LightningModule):
         y_hats = torch.cat(y_hats)
         ys = torch.cat(ys)
         opt_thresh, opt_f1, opt_prec, opt_rec = 0, 0, 0, 0
-        for thresh in np.arange(0.2, 0.625, 0.025):
+        for thresh in np.arange(0.1, 0.25, 0.025):
             f1, prec, rec = self._get_metrics(ys, y_hats, thresh)
             if f1 > opt_f1:
                 opt_thresh = thresh

@@ -149,7 +149,8 @@ class MelspecDataset(Dataset):
         idx2 = random.randint(0, len(self) - 1)  # Second file | Второй файл
         idx3 = random.randint(0, len(self) - 1)  # Third file | Третий файл
         # Streching
-        self.width2 = random.randint(self.config.width - 60, self.config.width + 60)
+        stretch = int(0.1*self.config.width)
+        self.width2 = random.randint(self.config.width - stretch, self.config.width + stretch)
 
         images = np.zeros((self.config.n_mels, self.width2)).astype(np.float32)
         labels = np.zeros(len(CODE2INT), dtype="f")
@@ -165,7 +166,7 @@ class MelspecDataset(Dataset):
                 start = random.randint(0, mel.shape[1] - self.width2 - 1)
                 mel = mel[:, start: start + self.width2]
             else:
-                len_zero = random.randint(0, self.width2.shape[1])
+                len_zero = random.randint(0, self.width2 - mel.shape[1])
                 mel = np.concatenate((np.zeros((self.config.n_mels, len_zero)), mel), axis=1)
 
             mel = np.concatenate((mel, np.zeros((self.config.n_mels, self.width2-mel.shape[1]))), axis=1)
@@ -259,7 +260,7 @@ class MelspecDataset(Dataset):
         return {"x": images, "labels": labels}
 
 
-def mono_to_color(X, height=64, width=500, mean=0.5, std=0.5, eps=1e-6):
+def mono_to_color(X, height=64, width=500, mean=0.5, std=0.5, eps=1e-8):
     trans = transforms.Compose(
         [
             transforms.ToPILImage(),

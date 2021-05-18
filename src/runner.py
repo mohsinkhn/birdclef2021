@@ -115,14 +115,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--fold", required=True, type=int)
+    parser.add_argument("--splitid", default='', type=str)
     parser.add_argument("--device", required=True, type=int)
     parser.add_argument("--resumefromcheckpoint")
     args = parser.parse_args()
     DEVICE = args.device
     FOLD = args.fold
     config = ConfigParser(args.config)
-    df_tr = pd.read_parquet(f"data/tr_{FOLD}.pq")
-    df_vl = pd.read_parquet(f"data/vl_{FOLD}.pq")
+    df_tr = pd.read_parquet(f"data/tr{args.splitid}_{FOLD}.pq")
+    df_vl = pd.read_parquet(f"data/vl{args.splitid}_{FOLD}.pq")
 
     df_tr["secondary_labels"] = df_tr.apply(lambda x: [code for code in x['all_labels'] if code not in x['labels']], axis=1)
     df_vl["secondary_labels"] = df_vl.apply(lambda x: [code for code in x['all_labels'] if code not in x['labels']], axis=1)
