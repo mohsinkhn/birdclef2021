@@ -141,6 +141,7 @@ class MelspecDataset(Dataset):
         self.mixing_prob = config.mixing_prob  # Probability of stopping mixing | Вероятность прервать смешивание
         self.noise_level = config.noise_level  # level noise | Уровень шума
         self.signal_amp = config.signal_amp  # signal amplification during mixing | Усиления сигнала при смешивании
+        self.data_version = config.get('dataversion', '')
 
     def __len__(self):
         return len(self.filepaths)
@@ -158,7 +159,7 @@ class MelspecDataset(Dataset):
         for i, idy in enumerate([idx, idx2, idx3]):
             # Load numpy melspec
             fp = Path(self.filepaths[idy])
-            fp = str(Path("data/melspecs") / fp.parent.stem / f"{fp.stem}.npy")
+            fp = str(Path(f"data/melspecs{self.data_version}") / fp.parent.stem / f"{fp.stem}.npy")
             mel = np.load(fp, allow_pickle=True)
             # pad select specific period
             # mel = self.pad_select_patch(mel)
@@ -199,7 +200,7 @@ class MelspecDataset(Dataset):
         if self.add_bad:
             idy = random.randint(0, len(self.noise) - 1)
             noise_sample = self.noise.numpyfilepaths[idy]
-            noise_mel = np.load(noise_sample, allow_pickle=True)[:, 0:self.width2]  # Generate noise
+            noise_mel = np.load(noise_sample.replace('noisespecs', f'noisespecs{self.data_version}'), allow_pickle=True)[:, 0:self.width2]  # Generate noise
             noise_mel = random_power(noise_mel)
 
             images += noise_mel / (noise_mel.max() + 0.0000001) * (random.random() * 1 + 0.5) * images.max()

@@ -128,14 +128,14 @@ def fast_f1_score(predictions, target):
     return f1.mean(), precision.mean(), recall.mean()
 
 
-def get_score(probas, labels, thresh=0.5):
+def get_score(probas, labels, thresholds, thresh=0.5):
     targets = np.zeros_like(probas)
     for i, lb in enumerate(labels):
         for lj in lb.split(' '):
             targets[i, CODE2INT[lj]] = 1
 
-    predictions = probas > thresh
-    predictions[predictions.sum(1) == 0, 397] = 1 
+    predictions = probas > np.repeat(np.array(thresholds).reshape(-1, 1), 398, -1)
+    predictions[predictions.sum(1) == 0, 397] = 1
     return fast_f1_score(predictions, targets)
 
 
