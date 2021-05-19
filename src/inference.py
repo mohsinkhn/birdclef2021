@@ -157,7 +157,7 @@ def get_pp_predictions(models, configs, audio_files, test_df, loc_files,
     bird_loc_cnts = get_locationwise_counts(loc_files, loc_csv, normalize=True, range_deg=range_deg)
     probs = sigmoid(probs)
     probs = post_process2(probs, test_df, bird_loc_cnts, max_w, mean_w, cnt_w)
-    return probs, row_ids
+    return probs, row_ids, sites
 
 
 def sigmoid(x):
