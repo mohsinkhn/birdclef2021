@@ -1,9 +1,15 @@
+from copy import deepcopy
+
 import numpy as np
+from pathlib import Path
+import pandas as pd
 import pytorch_lightning as pl
 import timm
 import torch
 from torch import nn
 import torch.nn.functional as F
+
+from src.inference import get_models_preds, get_score, sigmoid
 
 
 class SelfAttention(nn.Module):
@@ -130,10 +136,27 @@ class BirdModel(pl.LightningModule):
                 opt_f1 = f1
                 opt_prec = prec
                 opt_rec = rec
+        test_info = pd.read_csv('data/train_soundscape_labels.csv')
+        filenames = list(Path("data/train_soundscapes").glob("*.ogg"))
+        filename_map = {"_".join(f.stem.split("_")[:2]): str(f) for f in filenames}
+        test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
+        config = deepcopy(self.config.config)
+        config.width = config.sr // config.hop_length * 5
+        _, probs,  _ = get_models_preds([self], [config], test_info.filepaths.unique(), test_info, 0.88, 0.95)
+        test_score = 0
+        test_thresh = 0
+        for thresh in np.arange(0.0, 0.9, 0.025):
+            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, thresh, thresh)[0]
+            if score > test_score:
+                test_score = score
+                test_thresh = thresh
+        print(test_thresh, test_score)
         self.log("valid_f1", opt_f1)
         self.log("valid_precision", opt_prec)
         self.log("valid_recall", opt_rec)
         self.log("optimal_thresh", opt_thresh)
+        self.log("test_f1", test_score)
+        self.log("test_thresh", test_thresh)
 
     def configure_optimizers(self):
         optimizer_, optimizer_kws = self.config.get_optimizer(self.stage)

@@ -128,15 +128,19 @@ def fast_f1_score(predictions, target):
     return f1.mean(), precision.mean(), recall.mean()
 
 
-def get_score(probas, labels, thresholds, thresh=0.5):
+def get_score(probas, labels, thresholds, thresh1=0.5, thresh2=0.3):
     targets = np.zeros_like(probas)
     for i, lb in enumerate(labels):
         for lj in lb.split(' '):
             targets[i, CODE2INT[lj]] = 1
 
-    predictions = probas > np.repeat(np.array(thresholds).reshape(-1, 1), 398, -1)
-    predictions[predictions.sum(1) == 0, 397] = 1
+    predictions = probas > thresh1
+    predictions[probas.max(1) < thresh2, 397] = 1
     return fast_f1_score(predictions, targets)
+
+
+def sigmoid(x):
+    return 1/(1 + np.exp(-x))
 
 
 def get_models_preds(models, configs, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda'):
