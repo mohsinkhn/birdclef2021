@@ -10,7 +10,7 @@ import torch
 
 from src.dataset import mono_to_color, INT2CODE, CODE2INT
 from src.prepare_melspecs import get_melspec
-from torchlib.io import ConfigParser
+# from torchlib.io import ConfigParser
 
 
 BASE_TEST_DIR = "data/train_soundscapes"
