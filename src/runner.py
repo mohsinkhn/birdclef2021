@@ -20,6 +20,7 @@ import wandb
 from src.dataset import MelspecDataset, TorchAudioValDataSet
 from src.lightningmodels import BirdModel
 from torchlib.io import ConfigParser, load_yaml
+from src.imbalanced_dataset_sampler import ImbalancedDatasetSampler
 
 
 def seed_everything(seed):
@@ -53,15 +54,26 @@ def train_one_fold(df_tr, df_vl, config, stage, logdir, device, wandb_logger, re
         True,
     )
     batch_size, num_workers = config.get_loader_params(stage)
-    tr_dl = DataLoader(
-        tr_ds,
-        shuffle=True,
-        drop_last=True,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=True,
-        # sampler=sampler
-    )
+    if config.config.get('sampler', '') == 'balanced':
+        sampler = ImbalancedDatasetSampler(tr_ds)
+        tr_dl = DataLoader(
+            tr_ds,
+            # shuffle=True,
+            drop_last=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True,
+            sampler=sampler
+        )
+    else:
+        tr_dl = DataLoader(
+            tr_ds,
+            shuffle=True,
+            drop_last=True,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
 
     vl_ds = MelspecDataset(
         df_vl.filepaths.values,
