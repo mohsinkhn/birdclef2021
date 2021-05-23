@@ -99,7 +99,7 @@ def train_one_fold(df_tr, df_vl, config, stage, logdir, device, wandb_logger, re
     # Model
     model = BirdModel(config, stage)
     checkpoint = ModelCheckpoint(
-        dirpath=logdir, filename="{epoch}-{valid_f1:.3f}", monitor="valid_f1", mode="max", verbose=True
+        dirpath=logdir, filename="{epoch}-{valid_f1:.3f}", monitor="valid_f1", mode="max", verbose=True, period=2
     )
     # average = StochasticWeightAveraging(30)
     # logging.info("Starting training...")

@@ -111,10 +111,12 @@ def post_process2(probas, test, bird_loc_cnts, max_w=0.5, mean_w=0.5, cnt_w=0):
         rows = test.audio_id == audio_id
         site = test.loc[rows, 'site'].iloc[0]
         bird_cnts = bird_loc_cnts[site]
-        cnt_prob = np.log1p(np.repeat(np.array([bird_cnts.get(INT2CODE[i], 0) for i in range(398)]).reshape(1, -1), sum(rows), 0))
+        cnt_prob = np.repeat(np.array([bird_cnts.get(INT2CODE[i], 0) > 0 for i in range(398)]).reshape(1, -1), sum(rows), 0)
         max_probs = np.max(proba[rows], axis=0, keepdims=True)
         mean_probs = np.mean(proba[rows], axis=0, keepdims=True)
-        proba[rows] = proba[rows] + max_w*np.clip(max_probs, 0, 1.0) + mean_w*np.clip(mean_probs, 0, 1.0) + cnt_w*np.clip(cnt_prob, 0, 1/(1e-6 + cnt_w))
+        if cnt_w > 0:
+            proba[rows] = proba[rows] * cnt_prob
+        proba[rows] = proba[rows] + max_w*np.clip(max_probs, 0, 1.0) + mean_w*np.clip(mean_probs, 0, 1.0)
     return proba
 
 
@@ -333,3 +335,133 @@ def generate(models, border, config, filepaths, csvfile, check_accuracy=True, de
             print(f"F1 - score : {f1score}, Precision: {precision}, Recall: {recall}")
             return preds, f1score
     return preds, None
+
+
+# def prediction_for_clip(test_df,
+#                         clip, 
+#                         model,
+#                         config,
+#                         threshold,
+#                         clip_threshold,
+#                         device='cuda'):
+
+#     audios = []
+#     y = clip.astype(np.float32)
+#     len_y = len(y)
+#     start = 0
+#     end = config.period * config.sr
+#     while True:
+#         y_batch = y[start:end].astype(np.float32)
+#         if len(y_batch) != config.period * config.sr:
+#             y_pad = np.zeros(config.period * config.sr, dtype=np.float32)
+#             y_pad[:len(y_batch)] = y_batch
+#             audios.append(y_pad)
+#             break
+#         start = end
+#         end += config.period * config.sr
+#         audios.append(y_batch)
+        
+#     array = np.asarray(audios)
+#     tensors = torch.from_numpy(array)
+    
+#     model.eval()
+#     estimated_event_list = []
+#     global_time = 0.0
+#     site = test_df["site"].values[0]
+#     audio_id = test_df["audio_id"].values[0]
+#     for image in tensors:
+#         image = image.unsqueeze(0).unsqueeze(0)
+#         image = image.expand(image.shape[0], 1, image.shape[2])
+#         image = image.to(device)
+        
+#         with torch.no_grad():
+#             prediction = model((image, None))
+#             framewise_outputs = prediction["framewise_output"].detach(
+#                 ).cpu().numpy()[0].mean(axis=0)
+#             clipwise_outputs = prediction["clipwise_output"].detach(
+#                 ).cpu().numpy()[0].mean(axis=0)
+                
+#         thresholded = framewise_outputs >= threshold
+        
+#         clip_thresholded = clipwise_outputs >= clip_threshold
+#         clip_indices = np.argwhere(clip_thresholded).reshape(-1)
+#         clip_codes = []
+#         for ci in clip_indices:
+#             clip_codes.append(INT2CODE[ci])
+            
+#         for target_idx in range(thresholded.shape[1]):
+#             if thresholded[:, target_idx].mean() == 0:
+#                 pass
+#             else:
+#                 detected = np.argwhere(thresholded[:, target_idx]).reshape(-1)
+#                 head_idx = 0
+#                 tail_idx = 0
+#                 while True:
+#                     if (tail_idx + 1 == len(detected)) or (
+#                             detected[tail_idx + 1] - 
+#                             detected[tail_idx] != 1):
+#                         onset = 0.01 * detected[
+#                             head_idx] + global_time
+#                         offset = 0.01 * detected[
+#                             tail_idx] + global_time
+#                         onset_idx = detected[head_idx]
+#                         offset_idx = detected[tail_idx]
+#                         max_confidence = framewise_outputs[
+#                             onset_idx:offset_idx, target_idx].max()
+#                         mean_confidence = framewise_outputs[
+#                             onset_idx:offset_idx, target_idx].mean()
+#                         if INT2CODE[target_idx] in clip_codes:
+#                             estimated_event = {
+#                                 "site": site,
+#                                 "audio_id": audio_id,
+#                                 "ebird_code": INT2CODE[target_idx],
+#                                 "clip_codes": clip_codes,
+#                                 "onset": onset,
+#                                 "offset": offset,
+#                                 "max_confidence": max_confidence,
+#                                 "mean_confidence": mean_confidence
+#                             }
+#                             estimated_event_list.append(estimated_event)
+#                         head_idx = tail_idx + 1
+#                         tail_idx = tail_idx + 1
+#                         if head_idx >= len(detected):
+#                             break
+#                     else:
+#                         tail_idx += 1
+#         global_time += config.period
+        
+#     prediction_df = pd.DataFrame(estimated_event_list)
+#     return prediction_df
+
+
+# import warnings
+# from collections import defaultdict
+# from tqdm import progress_bar
+# def prediction(test_df: pd.DataFrame,
+#                test_audio: Path,
+#                list_of_model_details):
+#     unique_audio_id = test_df.audio_id.unique()
+
+#     warnings.filterwarnings("ignore")
+#     prediction_dfs_dict = defaultdict(list)
+#     for audio_id in progress_bar(unique_audio_id):
+#         clip, _ = librosa.load(test_audio / (audio_id + ".ogg"),
+#                                sr=config.sr,
+#                                mono=True,
+#                                res_type="kaiser_fast")
+        
+#         test_df_for_audio_id = test_df.query(
+#             f"audio_id == '{audio_id}'").reset_index(drop=True)
+#         for i, model_details in enumerate(list_of_model_details):
+#             prediction_df = prediction_for_clip(test_df_for_audio_id,
+#                                                 clip=clip,
+#                                                 model=model_details["model"],
+#                                                 threshold=model_details["threshold"],
+#                                                clip_threshold=model_details["clip_threshold"])
+
+#             prediction_dfs_dict[i].append(prediction_df)
+#     list_of_prediction_df = []
+#     for key, prediction_dfs in prediction_dfs_dict.items():
+#         prediction_df = pd.concat(prediction_dfs, axis=0, sort=False).reset_index(drop=True)
+#         list_of_prediction_df.append(prediction_df)
+#     return list_of_prediction_df
