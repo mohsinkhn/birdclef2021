@@ -79,6 +79,6 @@ class ConfigParser:
         model_ = getattr(lightningmodels, stage_params.model.cls)
         model_kws = stage_params.model.kws
         model = model_(**model_kws)
-        if stage_params.model.load_path != 'None':
-            model.load_state_dict(torch.load(stage_params.model.load_path), strict=False)
+        # if stage_params.model.load_path != 'None':
+        #     model.load_state_dict(torch.load(stage_params.model.load_path)['state_dict'], strict=True)
         return model

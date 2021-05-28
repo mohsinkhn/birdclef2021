@@ -65,6 +65,41 @@ class SedAttnCNN(nn.Module):
         return torch.sum(x, 1)
 
 
+class SedAttnCNN3(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.mean(x, dim=2)  # B, C, W1
+        x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        x = self.attn(x)
+        x = self.drop(x)
+        x = self.clf(x.transpose(1, 2))
+        return torch.sum(x, 1)
+
+
 def init_layer(layer):
     nn.init.xavier_uniform_(layer.weight)
 
@@ -148,7 +183,7 @@ class AttBlock(nn.Module):
         # x: (n_samples, n_in, n_time)
         norm_att = torch.softmax(torch.tanh(self.att(x)), dim=-1)
         cla = self.nonlinear_transform(self.cla(x))
-        x = torch.sum(norm_att * cla, dim=2)
+        x = torch.sum(norm_att * cla, dim=2) + 0.5*torch.max(norm_att, dim=2)[0]
         return x, norm_att, cla
 
     def nonlinear_transform(self, x):
@@ -173,15 +208,16 @@ class SedAttnCNN2(nn.Module):
         super().__init__()
         self.backbone = timm.create_model(backbone, pretrained=pretrained)
         self.drop = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(1024, 1024, bias=True)
-        self.att_block = AttBlock(1024, num_classes, activation='sigmoid')
+        self.dropout = dropout
+        self.fc1 = nn.Linear(self.backbone.num_features, 1024, bias=True)
+        self.att_block = AttBlock(1024, num_classes, activation='linear')
         self.interpolate_ratio = 32  # Downsampled ratio
 
     def forward(self, x):
-        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
-        x = torch.mean(x, dim=3)  # B, C, W1
-        b, c, frames_num = x.shape
-
+        _, _, h, frames_num = x.shape
+        # print("Input: ", x.shape)
+        x = self.backbone.forward_features(x)  # B, C, H, W --> B, C, H1, W1
+        x = torch.mean(x, dim=2)  # B, C, W1
         x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
         x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
         x = x1 + x2
@@ -189,23 +225,25 @@ class SedAttnCNN2(nn.Module):
         # x = F.relu_(self.fc1(x))
         # x = x.transpose(1, 2)
         # x = self.drop(x)
-        x = F.dropout(x, p=0.5, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
         x = x.transpose(1, 2)
         x = F.relu_(self.fc1(x))
         x = x.transpose(1, 2)
-        x = F.dropout(x, p=0.5, training=self.training)
-        (clipwise_output, norm_att, segmentwise_output) = self.att_block(x)
-        segmentwise_output = segmentwise_output.transpose(1, 2)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        b, c, w1 = x.shape
+        (clipwise_output, norm_att, segmentwise_output) = self.att_block(x)  # b x c, b x c x w1, b x c x w1
+        segmentwise_output = segmentwise_output.transpose(1, 2)  # b x w1 x c
 
         # Get framewise output
         framewise_output = interpolate(segmentwise_output,
-                                       self.interpolate_ratio)
+                                       self.interpolate_ratio)   # b x w x c
+        # print("frame output shape", framewise_output.shape)
         framewise_output = pad_framewise_output(framewise_output, frames_num)
-        frame_shape = framewise_output.shape
-        clip_shape = clipwise_output.shape
+        # frame_shape = framewise_output.shape
+        # clip_shape = clipwise_output.shape
         output_dict = {
-            'framewise_output': framewise_output.reshape(b, c, frame_shape[1], frame_shape[2]),
-            'clipwise_output': clipwise_output.reshape(b, c, clip_shape[1]),
+            'framewise_output': framewise_output,  # .reshape(b, frame_shape[1], frame_shape[2]),
+            'clipwise_output': clipwise_output  # .reshape(b, clip_shape[1]),
         }
 
         return output_dict
@@ -286,13 +324,13 @@ class BirdModel(pl.LightningModule):
         filenames = list(Path("data/train_soundscapes").glob("*.ogg"))
         filename_map = {"_".join(f.stem.split("_")[:2]): str(f) for f in filenames}
         test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
-        config = deepcopy(self.config.config)
-        config.width = config.sr // config.hop_length * 5
-        _, probs,  _ = get_models_preds([self], [config], test_info.filepaths.unique(), test_info, 0.88, 0.95)
+        config2 = deepcopy(self.config.config)
+        config2.width = config2.sr // config2.hop_length * 5
+        _, probs,  _ = get_models_preds([self], [config2], test_info.filepaths.unique(), test_info, 0.88, 1.0)
         test_score = 0
         test_thresh = 0
         for thresh in np.arange(0.0, 0.9, 0.025):
-            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, thresh, thresh)[0]
+            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, [], thresh, thresh)[0]
             if score > test_score:
                 test_score = score
                 test_thresh = thresh
@@ -384,13 +422,13 @@ class BirdModel2(pl.LightningModule):
         filenames = list(Path("data/train_soundscapes").glob("*.ogg"))
         filename_map = {"_".join(f.stem.split("_")[:2]): str(f) for f in filenames}
         test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
-        config = deepcopy(self.config.config)
-        config.width = config.sr // config.hop_length * 5
-        _, probs,  _ = get_models_preds([self], [config], test_info.filepaths.unique(), test_info, 0.88, 0.95)
+        config2 = deepcopy(self.config.config)
+        config2.width = config2.sr // config2.hop_length * 5 
+        _, probs,  _ = get_models_preds([self], [config2], test_info.filepaths.unique(), test_info, 0.88, 1.0, 'cuda', 'v2')
         test_score = 0
         test_thresh = 0
         for thresh in np.arange(0.0, 0.9, 0.025):
-            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, thresh, thresh)[0]
+            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, [], thresh, thresh)[0]
             if score > test_score:
                 test_score = score
                 test_thresh = thresh

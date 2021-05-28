@@ -206,7 +206,7 @@ class MelspecDataset(Dataset):
                 start = random.randint(0, noise_mel.shape[1] - self.width2 - 1)
                 noise_mel = noise_mel[:, start: start + self.width2]
             else:
-                noise_mel = np.pad(noise_mel, ((0, 0),(0, self.width2 - noise_mel.shape[1])), mode='wrap')
+                noise_mel = np.pad(noise_mel, ((0, 0), (0, self.width2 - noise_mel.shape[1])), mode='wrap')
 
             images += noise_mel / (noise_mel.max() + 0.0000001) * (random.random() * 1 + 0.5) * images.max()
         # Convert to decibels and normalize

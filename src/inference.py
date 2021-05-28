@@ -55,7 +55,7 @@ def get_locationwise_counts(location_filepaths, metadata_fp, normalize=True, ran
     return bird_loc_cnts
 
 
-def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85, compress_factor=0.95, device='cuda'):
+def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85, compress_factor=0.95, device='cuda', version='v1'):
     melspectr = get_melspec(audio_file, config)
     melspectr = librosa.power_to_db(melspectr, amin=1e-7, ref=np.max)
     melspectr = ((melspectr+80)/80).astype(np.float32)
@@ -63,6 +63,7 @@ def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85
     row_ids = test_audio.row_id.values
     end_seconds = test_audio.seconds.values
     clip_frames = int(config.sr/config.hop_length)
+    # width = 5 * clip_frames
     ys = []
 
     # stack array of melspec images
@@ -84,21 +85,24 @@ def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85
             mel = ys[n:n+batch_size]
 
         mel = torch.from_numpy(mel).to(device)
-        prediction = model.model(mel)
+        if version == 'v2':
+            prediction = model.model(mel)['clipwise_output']
+        else:
+            prediction = model.model(mel)
         # prediction = torch.sigmoid(prediction)
         proba = prediction.detach().cpu().numpy()
         probas.append(proba)
     return row_ids, probas, site
 
 
-def get_clipwise_preds(model, config, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda'):
+def get_clipwise_preds(model, config, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda', version='v1'):
     model.eval()
     row_idss, probass, sites = [], [], []
     with torch.no_grad():
         for audio_file in tqdm(audio_files):
             test_audio = test_df.query(f"filepaths == '{audio_file}'").reset_index(drop=True)
             row_ids, probas, site = get_audio_file_predictions(model, config, audio_file, test_audio, power,
-                                                               compress_factor, device)                
+                                                               compress_factor, device, version=version)                
             row_idss.extend(row_ids)
             probass.extend(probas)
             sites.append(site)
@@ -117,6 +121,22 @@ def post_process2(probas, test, bird_loc_cnts, max_w=0.5, mean_w=0.5, cnt_w=0):
         if cnt_w > 0:
             proba[rows] = proba[rows] * cnt_prob
         proba[rows] = proba[rows] + max_w*np.clip(max_probs, 0, 1.0) + mean_w*np.clip(mean_probs, 0, 1.0)
+    return proba
+
+
+def post_process3(probas, test, bird_loc_cnts, max_w=0.5, mean_w=0.5, cnt_w=5):
+    proba = probas.copy()    
+    for audio_id in test.audio_id.unique():
+        rows = test.audio_id.values == audio_id
+        site = test.loc[rows, 'site'].iloc[0]
+        bird_cnts = bird_loc_cnts[site]
+        cnt_prob = np.log1p(np.repeat(np.array([bird_cnts.get(INT2CODE[i], 0) > 0 for i in range(398)]).reshape(1, -1), sum(rows), 0))
+        max_probs = np.max(proba[rows], axis=0, keepdims=True)
+        mean_probs = np.mean(proba[rows], axis=0, keepdims=True)
+        if cnt_w > 0:
+            proba[rows] *= cnt_prob 
+        proba[rows] = np.clip(proba[rows] + max_w*np.clip(max_probs, 0, 0.67), 0, 1)
+    proba[:, 397] = probas[:, 397]
     return proba
 
 
@@ -145,11 +165,11 @@ def sigmoid(x):
     return 1/(1 + np.exp(-x))
 
 
-def get_models_preds(models, configs, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda'):
+def get_models_preds(models, configs, audio_files, test_df, power=0.85, compress_factor=0.95, device='cuda', version='v1'):
     probass = []
     for model, config in zip(models, configs):
-        row_ids, probas, sites = get_clipwise_preds(model, config, audio_files, test_df, power=0.85,
-                                                    compress_factor=0.95, device='cuda')
+        row_ids, probas, sites = get_clipwise_preds(model, config, audio_files, test_df, power=power,
+                                                    compress_factor=compress_factor, device=device, version=version)
         probass.append(probas)
     return row_ids, probass, sites
 
@@ -162,7 +182,7 @@ def get_pp_predictions(models, configs, audio_files, test_df, loc_files,
     probs = np.mean(probs, 0)
     bird_loc_cnts = get_locationwise_counts(loc_files, loc_csv, normalize=True, range_deg=range_deg)
     probs = sigmoid(probs)
-    probs = post_process2(probs, test_df, bird_loc_cnts, max_w, mean_w, cnt_w)
+    probs = post_process3(probs, test_df, bird_loc_cnts, max_w, mean_w, cnt_w)
     return probs, row_ids, sites
 
 
