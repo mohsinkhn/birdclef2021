@@ -91,7 +91,9 @@ if __name__ == "__main__":
     #     np.save(str(save_file), melspec)
 
     SAVE_PATH = "data/noisespecs3"
-
+    CONFIG = "configs/melconfig2.yaml"
+    with open(CONFIG, "r") as fp:
+        config = EasyDict(yaml.safe_load(fp))
     train = pd.read_csv("/home/mohsin_okcredit_in/projects/birdsong_identification/data/BAD/birdvox_dcase_20k/labels.txt")
     train = train.loc[train.hasbird == 0]
     train["filepaths"] = train.itemid.apply(lambda x: f"/home/mohsin_okcredit_in/projects/birdsong_identification/data/BAD/birdvox_dcase_20k/wav/{x}.wav")

@@ -87,6 +87,8 @@ def get_audio_file_predictions(model, config, audio_file, test_audio, power=0.85
         mel = torch.from_numpy(mel).to(device)
         if version == 'v2':
             prediction = model.model(mel)['clipwise_output']
+        elif version == 'v3':
+            prediction = model.model(mel)[0]
         else:
             prediction = model.model(mel)
         # prediction = torch.sigmoid(prediction)

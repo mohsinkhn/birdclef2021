@@ -65,6 +65,187 @@ class SedAttnCNN(nn.Module):
         return torch.sum(x, 1)
 
 
+class SedAttnCNNMean(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.mean(x, dim=3)  # B, C, W1
+        x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        x = self.attn(x)
+        x = self.drop(x)
+        x = self.clf(x.transpose(1, 2))
+        return torch.mean(x, 1)
+
+
+class SedAttnCNNMax(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.max(x, dim=3)[0]  # B, C, W1
+        x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        x = self.attn(x)
+        x = self.drop(x)
+        x = self.clf(x.transpose(1, 2))
+        return torch.sum(x, 1)
+
+
+class SedAttnCNN1(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        #self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        #self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+        self.clf2 = nn.Linear(self.backbone.num_features, 146)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.mean(x, dim=2)  # B, C, W1
+        # x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        # x = self.attn(x)
+        x = self.drop(x)
+        x1 = self.clf(x.transpose(1, 2))
+        x2 = self.clf2(x.transpose(1, 2))
+        return torch.mean(x1, 1) + torch.max(x1, 1)[0]*0.5, torch.mean(x2, 1) + torch.max(x2, 1)[0]*0.5
+
+
+class SedAttnCNN11(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        #self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        #self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+        self.clf2 = nn.Linear(self.backbone.num_features, 146)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.mean(x, dim=2)  # B, C, W1
+        # x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        # x = self.attn(x)
+        x = self.drop(x)
+        x1 = self.clf(x.transpose(1, 2))
+        x2 = self.clf2(x.transpose(1, 2))
+        return torch.sum(x1, 1) + torch.max(x1, 1)[0]*0.5, torch.sum(x2, 1) + torch.max(x2, 1)[0]*0.5
+
+
+class SedAttnCNN12(nn.Module):
+    def __init__(
+        self,
+        backbone="densenet121",
+        pretrained=True,
+        dropout=0.5,
+        fc_channels=1024,
+        attn_channels=2048,
+        attn_gamma=1.0,
+        attn_dropout=0.1,
+        num_classes=398
+    ):
+        super().__init__()
+        self.backbone = timm.create_model(backbone, pretrained=pretrained)
+        self.drop = nn.Dropout(dropout)
+        #self.fc1 = nn.Linear(self.backbone.num_features, fc_channels)
+        #self.attn = SelfAttention(self.backbone.num_features, attn_channels, attn_gamma, attn_dropout)
+        self.clf = nn.Linear(self.backbone.num_features, num_classes)
+        self.clf2 = nn.Linear(self.backbone.num_features, 146)
+
+    def forward(self, x):
+        x = self.backbone.forward_features(x)  # B, C, W, H --> B, C, W1, H1
+        x = torch.mean(x, dim=2)  # B, C, W1
+        # x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        # x = x1 + x2
+        # x = x.transpose(1, 2)
+        # x = F.relu_(self.fc1(x))
+        # x = x.transpose(1, 2)
+        # x = self.drop(x)
+        # x = self.attn(x)
+        x = self.drop(x)
+        x1 = self.clf(x.transpose(1, 2))
+        x2 = self.clf2(x.transpose(1, 2))
+        return torch.sum(x1, 1), torch.sum(x2, 1)
+
+
 class SedAttnCNN3(nn.Module):
     def __init__(
         self,
@@ -326,11 +507,124 @@ class BirdModel(pl.LightningModule):
         test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
         config2 = deepcopy(self.config.config)
         config2.width = config2.sr // config2.hop_length * 5
-        _, probs,  _ = get_models_preds([self], [config2], test_info.filepaths.unique(), test_info, 0.88, 1.0)
+        _, probs,  _ = get_models_preds([self], [config2], test_info.filepaths.unique(), test_info, 0.75, 0.975)
         test_score = 0
         test_thresh = 0
-        for thresh in np.arange(0.0, 0.9, 0.025):
-            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, [], thresh, thresh)[0]
+        for thresh in np.arange(0.1, 0.9, 0.02):
+            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, [], thresh, thresh+0.05)[0]
+            if score > test_score:
+                test_score = score
+                test_thresh = thresh
+        print(test_thresh, test_score)
+        self.log("valid_f1", opt_f1)
+        self.log("valid_precision", opt_prec)
+        self.log("valid_recall", opt_rec)
+        self.log("optimal_thresh", opt_thresh)
+        self.log("test_f1", test_score)
+        self.log("test_thresh", test_thresh)
+
+    def configure_optimizers(self):
+        optimizer_, optimizer_kws = self.config.get_optimizer(self.stage)
+        params = list(self.model.named_parameters())
+
+        def is_backbone(x):
+            return "backbone" in x
+
+        grouped_parameters = [
+            {
+                "params": [p for n, p in params if is_backbone(n)],
+                "lr": optimizer_kws["lr"] * optimizer_kws.get("backbone_ratio", 0.1),
+            },
+            {"params": [p for n, p in params if not is_backbone(n)], "lr": optimizer_kws["lr"]},
+        ]
+
+        optimizer = optimizer_(grouped_parameters, weight_decay=optimizer_kws["weight_decay"])
+        scheduler_, scheduler_kws, scheduler_type = self.config.get_scheduler(self.stage)
+        scheduler = scheduler_(optimizer, **scheduler_kws)
+        return (
+            [optimizer],
+            [{"scheduler": scheduler, "interval": self.config.config.training[self.stage].get("scheduler_type", "epoch")}],
+        )
+
+    def _get_metrics(self, y, y_hat, thresh=0.5, eps=1e-6):
+        preds = (y_hat > thresh) * 1.0
+        y = y >= self.config.config.secondary_confidence
+        preds[preds.sum(1) == 0, -1] = 1.0
+        prec = ((preds * y).sum() / (eps + preds.sum())).item()
+        rec = ((preds * y).sum() / (eps + y.sum())).item()
+        f1 = 2 * prec * rec / (eps + prec + rec)
+        return f1, prec, rec
+
+
+class MultiBCE(nn.Module):
+    def __init__(self, sweight=0.2):
+        super().__init__()
+        self.sweight = sweight
+        self.bc1 = nn.BCEWithLogitsLoss()
+        self.bc2 = nn.BCEWithLogitsLoss()
+
+    def forward(self, logits, slogits, y1, y2):
+        l1 = self.bc1(logits, y1)
+        l2 = self.bc2(slogits, y2)
+        return l1 + self.sweight * l2
+
+
+class BirdModel1(pl.LightningModule):
+    def __init__(self, config, stage):
+        super().__init__()
+        self.config = config
+        self.stage = stage
+        self.model = self.config.get_model(self.stage)
+        self.criterion = MultiBCE(sweight=config.config.get('sweight', 0.2))
+
+    def training_step(self, batch, batch_idx):
+        y = batch["labels"]
+        sy = batch["slabels"]
+        x = batch["x"]
+        logits, slogits = self.model(x)
+        loss = self.criterion(logits, slogits, y, sy)
+        self.log("train_loss", loss, on_epoch=True, logger=True)
+        f1, prec, rec = self._get_metrics(y, torch.sigmoid(logits))
+        self.log("train_f1", f1, on_epoch=True, logger=True, reduce_fx=torch.mean)
+        self.log("train_precision", f1, on_epoch=True, logger=True, reduce_fx=torch.mean)
+        self.log("train_recall", f1, on_epoch=True, logger=True, reduce_fx=torch.mean)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        y = batch["labels"]
+        sy = batch["slabels"]
+        x = batch["x"]
+        logits, slogits = self.model(x)
+        loss = self.criterion(logits, slogits, y, sy)
+        self.log("valid_loss", loss, on_epoch=True, logger=True)
+        return {"loss": loss, "y_hat": torch.sigmoid(logits), "y": y}
+
+    def validation_epoch_end(self, outputs):
+        y_hats, ys = [], []
+        for output in outputs:
+            y_hats.append(output["y_hat"])
+            ys.append(output["y"])
+        y_hats = torch.cat(y_hats)
+        ys = torch.cat(ys)
+        opt_thresh, opt_f1, opt_prec, opt_rec = 0, 0, 0, 0
+        for thresh in np.arange(0.1, 0.25, 0.025):
+            f1, prec, rec = self._get_metrics(ys, y_hats, thresh)
+            if f1 > opt_f1:
+                opt_thresh = thresh
+                opt_f1 = f1
+                opt_prec = prec
+                opt_rec = rec
+        test_info = pd.read_csv('data/train_soundscape_labels.csv')
+        filenames = list(Path("data/train_soundscapes").glob("*.ogg"))
+        filename_map = {"_".join(f.stem.split("_")[:2]): str(f) for f in filenames}
+        test_info["filepaths"] = test_info.row_id.apply(lambda x: filename_map["_".join(x.split("_")[:2])])
+        config2 = deepcopy(self.config.config)
+        config2.width = config2.sr // config2.hop_length * 5
+        _, probs,  _ = get_models_preds([self], [config2], test_info.filepaths.unique(), test_info, 0.75, 0.975, version='v3')
+        test_score = 0
+        test_thresh = 0
+        for thresh in np.arange(0.1, 0.9, 0.02):
+            score = get_score(sigmoid(np.mean(probs, 0)), test_info.birds.values, [], thresh, thresh+0.05)[0]
             if score > test_score:
                 test_score = score
                 test_thresh = thresh

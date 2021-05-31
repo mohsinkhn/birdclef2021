@@ -266,6 +266,195 @@ class MelspecDataset(Dataset):
         return {"x": images, "labels": labels}
 
 
+SCODES = ['flycatcher', 'woodpecker', 'avocet', 'crow', 'goldfinch',
+    'kestrel', 'pipit', 'redstart', 'robin', 'wigeon', 'sparrow',
+    'solitaire', 'hummingbird', 'spinetail', 'warbler', 'eagle',
+    'oriole', 'bananaquit', 'swallow', 'wren', 'antshrike', 'pigeon',
+    'duck', 'heron', 'kingfisher', 'vireo', 'magpie', 'plover',
+    'chickadee', 'grosbeak', 'toucan', 'stilt', 'grassquit', 'thrush',
+    'jay', 'tanager', 'parrot', 'phoebe', 'cowbird', 'gull', 'grackle',
+    'motmot', 'blackbird', 'creeper', 'thrasher', 'attila', 'hawk',
+    'gnatcatcher', 'bushtit', 'saltator', 'teal', 'goose', 'quail',
+    'towhee', 'finch', 'kingbird', 'tern', 'egret', 'brushfinch',
+    'waxwing', 'antbird', 'antpitta', 'nutcracker', 'chlorospingus',
+    'woodcreeper', 'dove', 'chachalaca', 'trogon', 'goldeneye', 'loon',
+    'merganser', 'pauraque', 'potoo', 'raven', 'yellowthroat', 'guan',
+    'oropendola', 'parakeet', 'junco', 'bluebird', 'meadowlark',
+    'pewee', 'starling', 'owl', 'gadwall', 'kinglet', 'tyrannulet',
+    'quetzal', 'ani', 'kiskadee', 'tinamou', 'yellowlegs', 'catbird',
+    'bunting', 'killdeer', 'falcon', 'sandpiper', 'greenlet',
+    'violetear', 'dowitcher', 'gnatwren', 'shrike', 'manakin',
+    'mallard', 'elaenia', 'swan', 'cardinal', 'flicker', 'mockingbird',
+    'parula', 'shoveler', 'waterthrush', 'titmouse', 'euphonia',
+    'osprey', 'ovenbird', 'grebe', 'siskin', 'xenops', 'gallinule',
+    'fruitcrow', 'nuthatch', 'sapsucker', 'crossbill', 'barbet',
+    'becard', 'peppershrike', 'turnstone', 'jacamar', 'crane',
+    'sanderling', 'macaw', 'tyrant', 'lapwing', 'cuckoo', 'veery',
+    'verdin', 'seedeater', 'whimbrel', 'willet', 'snipe', 'turkey',
+    'wrentit', 'coot', 'chat', 'caracara']
+SCODE2INT = {c: i for i, c in enumerate(SCODES)}
+SINT2CODE = {i: c for c, i in SCODE2INT.items()}
+
+
+class MelspecDataset2(Dataset):
+    def __init__(
+        self,
+        filepaths,
+        labels,
+        secondary_labels,
+        secondary_targets,
+        config,
+        transforms=None,
+        random_power=True,
+        add_bad=True,
+        add_noise=True,
+    ):
+        # Initialize the list of melspectrograms | Инициализировать список мелспектрограмм
+        self.filepaths = filepaths
+        self.labels = labels
+        self.secondary_labels = secondary_labels
+        self.secondary_targets = secondary_targets
+        self.transforms = transforms
+        self.config = config
+        self.noise = pd.read_csv("data/nocall2.csv")
+        self.random_power = random_power
+        self.add_bad = add_bad
+        self.add_noise = add_noise
+        self.mixing_prob = config.mixing_prob  # Probability of stopping mixing | Вероятность прервать смешивание
+        self.noise_level = config.noise_level  # level noise | Уровень шума
+        self.signal_amp = config.signal_amp  # signal amplification during mixing | Усиления сигнала при смешивании
+        self.data_version = config.get('dataversion', '')
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        idx2 = random.randint(0, len(self) - 1)  # Second file | Второй файл
+        idx3 = random.randint(0, len(self) - 1)  # Third file | Третий файл
+        # Streching
+        stretch = int(0.1*self.config.width)
+        self.width2 = random.randint(self.config.width - stretch, self.config.width + stretch)
+
+        images = np.zeros((self.config.n_mels, self.width2)).astype(np.float32)
+        labels = np.zeros(len(CODE2INT), dtype="f")
+        slabels = np.zeros(len(SCODE2INT), dtype="f")
+
+        # Loop over files and concatenate labels.
+        for i, idy in enumerate([idx, idx2, idx3]):
+            # Load numpy melspec
+            fp = Path(self.filepaths[idy])
+            fp = str(Path(f"data/melspecs{self.data_version}") / fp.parent.stem / f"{fp.stem}.npy")
+            mel = np.load(fp, allow_pickle=True)
+            # pad select specific period
+            # mel = self.pad_select_patch(mel)
+            if mel.shape[1] > self.width2:
+                start = random.randint(0, mel.shape[1] - self.width2 - 1)
+                mel = mel[:, start: start + self.width2]
+            else:
+                len_zero = random.randint(0, self.width2 - mel.shape[1])
+                mel = np.concatenate((np.zeros((self.config.n_mels, len_zero)), mel), axis=1)
+
+            mel = np.concatenate((mel, np.zeros((self.config.n_mels, self.width2-mel.shape[1]))), axis=1)
+            # Random power
+            if self.random_power:
+                mel = random_power(mel, power=2, c=0.5)
+
+            # Combine with random amplification
+            images += mel * (random.random() * self.signal_amp + 1)
+            # Primary labels
+            ebird_codes = self.labels[idy]
+            scodes = self.secondary_targets[idy]
+            for ecode in ebird_codes:
+                if ecode in CODE2INT:
+                    labels[CODE2INT[ecode]] = 1
+
+            for scode in scodes:
+                if scode in SCODE2INT:
+                    slabels[SCODE2INT[scode]] = 1
+
+            # Secondary labels with lower confidence.
+            secondary_codes = self.secondary_labels[idy]
+            if len(secondary_codes) > 0:
+                for ecode in secondary_codes:
+                    if ecode in CODE2INT:
+                        labels[CODE2INT[ecode]] = self.config.secondary_confidence
+
+            if random.random() < self.mixing_prob:
+                break
+
+        if sum(labels) == 0:
+            labels[CODE2INT["nocall"]] = 1
+
+        # Add background noise from BAD dataset
+        if self.add_bad:
+            idy = random.randint(0, len(self.noise) - 1)
+            noise_sample = self.noise.numpyfilepaths[idy]
+            noise_mel = np.load(noise_sample, allow_pickle=True)[:, 0:self.width2]  # Generate noise
+            noise_mel = random_power(noise_mel)
+            if noise_mel.shape[1] > self.width2:
+                start = random.randint(0, noise_mel.shape[1] - self.width2 - 1)
+                noise_mel = noise_mel[:, start: start + self.width2]
+            else:
+                noise_mel = np.pad(noise_mel, ((0, 0), (0, self.width2 - noise_mel.shape[1])), mode='wrap')
+
+            images += noise_mel / (noise_mel.max() + 0.0000001) * (random.random() * 1 + 0.5) * images.max()
+        # Convert to decibels and normalize
+        images = librosa.power_to_db(images.astype(np.float32), ref=np.max)
+        images = (images + 80) / 80
+
+        # Add white, pink noise
+        if self.add_noise:
+            if random.random() < 0.9:
+                images = images + (
+                    np.random.sample((self.config.n_mels, self.width2)).astype(np.float32) + 9
+                ) * images.mean() * self.noise_level * (np.random.sample() + 0.3)
+
+            # Add pink noise
+            if random.random() < 0.9:
+                r = random.randint(1, self.config.n_mels)
+                pink_noise = np.array([np.concatenate((1 - np.arange(r) / r, np.zeros(self.config.n_mels - r)))]).T
+                images = images + (
+                    np.random.sample((self.config.n_mels, self.width2)).astype(np.float32) + 9
+                ) * 2 * images.mean() * self.noise_level * (np.random.sample() + 0.3)
+
+            # Add bandpass noise
+            if random.random() < 0.9:
+                a = random.randint(0, self.config.n_mels // 2)
+                b = random.randint(a + 20, self.config.n_mels)
+                images[a:b, :] = images[a:b, :] + (
+                    np.random.sample((b - a, self.width2)).astype(np.float32) + 9
+                ) * 0.05 * images.mean() * self.noise_level * (np.random.sample() + 0.3)
+
+            # Lower the upper frequencies
+            if random.random() < 0.5:
+                images = images - images.min()
+                r = random.randint(self.config.n_mels // 2, self.config.n_mels)
+                x = random.random() / 2
+                pink_noise = np.array(
+                    [np.concatenate((1 - np.arange(r) * x / r, np.zeros(self.config.n_mels - r) - x + 1))]
+                ).T
+                images = images * pink_noise
+                images = images / images.max()
+
+            # Change the contrast
+            images = random_power(images, power=2, c=0.7)
+
+        # Expand to 3 channels
+        images = mono_to_color(images, self.config.n_mels, self.config.width)
+        # Draw pictures | Рисуем графики
+        # if random.random() < 0.0001:
+        #     img = images.numpy()
+        #     img = img - img.min()
+        #     img = img / img.max()
+        #     img = np.moveaxis(img, 0, 2)
+        #     _ = plt.imshow(img)
+        #     codes = np.where(labels == 1)[0]
+        #     codestr = [INT2CODE[i] for i in codes]
+        #     plt.savefig("log/img/" + ("_".join(codestr)) + "_" + Path(self.filepaths[idx]).stem + ".png")
+
+        return {"x": images, "labels": labels, "slabels": slabels}
+
+
 def mono_to_color(X, height=64, width=500, mean=0.5, std=0.5, eps=1e-8):
     trans = transforms.Compose(
         [
